@@ -5,7 +5,7 @@
 % before loading neurips_2021
 
 % ready for submission
-\usepackage[preprint]{neurips_2021}
+\usepackage[preprint, nonatbib]{neurips_2021}
 
 % to compile a preprint version, e.g., for submission to arXiv, add add the
 % [preprint] option:
@@ -27,7 +27,24 @@
 \usepackage{microtype}      % microtypography
 \usepackage{xcolor}         % colors
 
-\title{Building a Phylogenetic Tree From\\ Raw Genome Data}
+\usepackage{graphicx}
+\usepackage{epigraph}
+\usepackage{csquotes}
+\usepackage{biblatex}
+\usepackage{algorithm2e}
+\usepackage{physics}
+\usepackage{wrapfig}
+
+
+\DeclareMathOperator*{\argmax}{arg\,max}
+\DeclareMathOperator*{\argmin}{arg\,min}
+
+\addbibresource{bib.bib}
+\RestyleAlgo{ruled}
+\MakeOuterQuote{"}
+
+% \title{Building a Phylogenetic Tree From\\ Raw Genome Data}
+\title{Growing Phylogenetic Trees\\ Using Hierarchical Clustering}
 
 % The \author macro works with any number of authors. There are two commands
 % used to separate the names and addresses of multiple authors: \And and \AND.
@@ -48,7 +65,94 @@
 \maketitle
 
 \begin{abstract}
-    I am planning to use genome sequence data from the National Center for Biotechnology Information (NCBI) or the Genome Taxonomy Database (GTDB) to build a phylogenetic tree of life. If this turns out to be easy, I will also conduct some more analysis, like clustering into kingdom/order/etc or regression or classification of characteristics of the organisms (like size), as a function of simple features like amino acid counts.
+    We compare mitochondrial DNA of different species to build a phylogenetic tree. The main challenge is that the calculation of the Levenshtein distance is very slow for large sequences. We introduce an approximate scheme which uses Levenshtein for lower level details and a fast distance based on sequence length for high level attributes. The tree is build using average linkage hierarchical clustering.
 \end{abstract}
+
+\section{Introduction}
+% \epigraph{There is grandeur in this view of life, with its several powers, having been originally breathed into a few forms or into one; and that, whilst this planet has gone cycling on according to the fixed law of gravity, from so simple a beginning endless forms most beautiful and most wonderful have been, and are being, evolved.}{Charles Darwin \parencite{darwin1964origin}}
+Evolution is a fascinating topic. Darwin's seminal treatise on the topic \parencite{darwin1964origin} is "surprisingly" recent, given that the question of where life and its diversity comes from must be an ancient one. % Indeed, even today some people still can't wrap their head around the simplicity and elegance of the concept of evolution, and choose to believe in creationist myths instead.
+At Darwin's time, all evidence of evolution was external: slight variations across species hinted at relatedness. Now, with bioinformatics being a completely independent research field, much has changed. We shall exploit two big such changes, which Darwin was not able to do at the time:
+\begin{enumerate}
+    \item The availability of genome data. Raw genome data are strings consisting of the letters \texttt{A}, \texttt{C}, \texttt{G} and \texttt{T}. This data represents the base pairs in an organism's DNA, and mostly encodes information about the structure of proteins.
+    \item The availability of computers. We will use computers to recognize patterns in the data and automatically determine the relatedness of species by comparing their DNA sequences.
+\end{enumerate}
+The goal of this work is to build a phylogenetic tree: a "tree of life". To figure out the relatedness of two organisms, we want compare their genomes and calculate a relatedness score. In Section~\ref{sec:meth}, we discuss how this score should be calculated, and how it can be used to build a tree.
+
+\section{Datasets}
+One problem with DNA data is that it does not naturally fit into a tabular arrangement. DNA is typically distributed across chromosomes. Different species have different numbers of chromosomes, and some species don't even have DNA, but RNA. This diversity is a result of the diversity of life, but we cannot focus on everything here. To simplify the problem, we restrict ourselves to eukaryotes. This class of species contains all plants, fungi and animals. One major advantage of of this simplification is the availability of mitochondria, which are part of the eukaryotic cell, and are responsible for converting sugar into ATP (the molecule used for energy exchange within a cell). An interesting property of mitochondria is that they possess their own DNA, separate from the other chromosomes in the cell. From here on out, we will restrict ourselves to analysing only mitochondrial DNA.
+
+The genome data we use is provided by the National Center for Biotechnology Information (NCBI) \parencite{wheeler2007database}. We provide a script to download and clean the data online\footnote{\url{https://github.com/onnoeberhard/phylo}}. All scripts are explained on the GitHub page. Later, we will also use taxonomy data from the NCBI.% \parencite{federhen2012ncbi}.
+
+\section{Method}\label{sec:meth}%
+\begin{wrapfigure}[22]{r}{0.45\textwidth}%
+\begin{algorithm}[H]%
+% \SetCustomAlgoRuledWidth{0.45\textwidth}
+\caption{Hierarchical Clustering}\label{alg:cluster}%
+    \KwIn{Dissimilarity matrix $D$}
+    \KwOut{Dendrogram $(C, h)$}
+    Level: $l \gets \abs{D}$\\
+    Clusters: $C_i^{l} \gets \{i\}, i=1,\dots,l$\\
+    Heights: $h_l \gets 0$\\
+    \While{$l > 1$}{
+    \For{$i, j \in \{1, \dots, l\}$}{
+    $d_{ij} \gets \frac{1}{\abs{C_i^l}\abs{C_j^l}} \sum_{n \in C_i^l, m \in C_j^l} D_{nm}$\\
+    }
+    $r, s \gets \argmin_{1 \leq i,j \leq l, i \neq j} d_{ij}$\\
+    $C_i^{l - 1} \gets C_i^{l}, i\not\in\{r, s\}$\\
+    $C_r^{l - 1} \gets C_r^{l} \cup C_s^{l} $\\
+    $h_{l - 1} \gets d_{rs}$\\
+    $l \gets l - 1$\\
+    Relabel clusters $C_i^l$ to $i \in \{1, \dots, l\}$
+    }
+\end{algorithm}
+\end{wrapfigure}
+
+How do we figure out how related two species are given their DNA sequences? Comparing two DNA strings is usually a very complicated task, with need for sophisticated sequence alignment algorithms. However, as we are only analyzing mitochondrial DNA, the complexity reduces greatly and we may assume a simplistic model of evolution. Under this model, we only consider point mutations and ignore other factors like sexual reproduction (mitochondria reproduce asexually), and copying/deleting of whole chunks of DNA. A point mutation is a "single-character edit", i.e. inserting, deleting or changing a single character of DNA. The Levenshtein distance $d_\mathrm{Lev}(a, b)$ is defined as the minimum number of single-character edits to change the string $a$ into $b$. If we calculate this distance between each pair of DNA sequences in our dataset, we have a reasonable relatedness score under our evolution model. Given such a distance measure, a phylogenetic tree can be built using (agglomerative) hierarchical clustering (Algorithm~\ref{alg:cluster}). We use average-linkage clustering which means that the distance of two clusters is the average of the distances of species in this cluster. This is a natural choice under our evolution model.
+
+One big problem with using the Levenshtein distance is that it is slow to compute, even when using fast C libraries. Especially for long sequences ($\geq$ 40.000) it becomes prohibitive. To solve this problem, we try to approximate the Levenshtein distance by a very simple heuristic, which we call the length-distance: $d_\mathrm{len}(a, b) := \abs{\mathrm{len}(a) - \mathrm{len}(b)}$. The rationale behind this is that for large sequence differences, the Levenshtein distance will be dominated by the difference in length. Both distance measures are compared to the real taxonomy classification in Figure~\ref{fig:dendro_test} on a small test set.
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics{dendo_test.pdf}
+    \caption{The length-distance works well on the macro- but not on the micro-level.}
+    \label{fig:dendro_test}
+\end{figure}
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics{hists.pdf}
+    \vspace*{-8mm}
+    \caption{We must decide where to trade off accuracy ($d_\mathrm{Lev}$) for efficiency ($d_\mathrm{len}$).}
+    \label{fig:hists}
+\end{figure}
+
+As the length-distance seems to work okay on large-scale structure, we ideally would want to only use the Levenshtein distance on shorter sequences. To this end, we analyze the distributions of length-distances in the left plot in Figure~\ref{fig:hists}. A natural cut-off point is to use Levenshtein for all pairs $a, b$ where $d_\mathrm{len} < 2000$. We will also filter out pairs where $\bar \ell(a, b) := \frac{1}{2}(\mathrm{len}(a) + \mathrm{len}(b)) \geq 40.000$, as shown in the center plot (Fig.~\ref{fig:hists}). In the right are shown the Levenshtein distances (after 24h of computation), where we filter the lonely outliers of $d_\mathrm{Lev} \geq 20.000$. Finally, we define:
+\begin{equation*}
+    d_\mathrm{joint}(a, b) :=
+    \begin{cases}
+        d_\mathrm{Lev}(a, b) & \mathrm{if}\;d_\mathrm{len}(a, b) < 2000,\;\bar\ell(a, b) < 40.000,\;d_\mathrm{Lev}(a, b) < 20.000\\
+        d_\mathrm{len} + 20.000 & \text{otherwise},
+    \end{cases}
+\end{equation*}
+which is the joint distance of $d_\mathrm{len}$ and $d_\mathrm{Lev}$. It is clear that always $d_\mathrm{Lev} \geq d_\mathrm{len}$, as the Levenshtein distance must at least account for the difference in length. Thus, we add 20.000 to the length-distance, so as not to interfere with the smaller scale. A comparison with $d_\mathrm{tax}$, which we define as the number of true taxonomy classes that $a$ and $b$ \emph{don't} have in common, is shown in Figure~\ref{fig:dists}.
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics{dist_matrices.pdf}
+    \caption{Distance matrices created for the species dataset ($\{s_i\}_{i=1}^N$): $D_{ij} = d(s_i, s_j)$.}
+    \label{fig:dists}
+\end{figure}
+
+\section{Results}
+The resulting phylogenetic tree is shown in Figure~\ref{fig:dendro}, where it is compared to one built with only the length-distance. It can be seen that using the $d_\mathrm{joint}$ works in practise, where calculating the Levenshtein distance is not feasible. However, there might be other computationally efficient distance measures that perform better than $d_\mathrm{len}$. Our evolution model is also not perfect, as DNA mutations are not always point mutations, but chunks can be copied or moved as one. A better distance measure would respect this as valid \emph{single} mutations.
+
+\printbibliography
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics{dendrogram.pdf}
+    \caption{Phylogenetic trees built using hierarchical clustering. Plants and fungi, which are at the top of the plots, are correctly separated from animals in both cases. The colored dots represent known taxonomy groups and should ideally be close together (even form convex sets) in the final tree. As expected, $D_\mathrm{joint}$ works much better than $D_\mathrm{lev}$, though some dots are still distributed a bit, which might show that even for higher-level structure, the length-distance is suboptimal.}
+    \label{fig:dendro}
+\end{figure}
 
 \end{document}
